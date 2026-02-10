@@ -65,7 +65,58 @@ class TestWebhookCallback:
         """Non-audio message events are ignored."""
         mock_event = MagicMock()
         mock_event.type = "message"
-        mock_event.message.type = "text"  # Not audio
+        mock_event.message.type = "text"
+        mock_event.message.file_name = None
+
+        mock_parser.parse.return_value = [mock_event]
+
+        response = client.post(
+            "/callback",
+            content='{"events": []}',
+            headers={
+                "X-Line-Signature": "valid",
+                "Content-Type": "application/json",
+            },
+        )
+
+        assert response.status_code == 200
+        mock_handler.assert_not_called()
+
+    @patch("app.main.handle_audio_message")
+    @patch("app.main.parser")
+    @patch("app.main.messaging_api")
+    def test_file_m4a_treated_as_audio(self, mock_messaging_api, mock_parser, mock_handler, client):
+        """M4A file shared via LINE file message triggers audio handler."""
+        mock_event = MagicMock()
+        mock_event.type = "message"
+        mock_event.source.user_id = "U_test"
+        mock_event.message.type = "file"
+        mock_event.message.file_name = "recording.m4a"
+        mock_event.message.id = "msg_file"
+        mock_event.reply_token = "reply_token"
+
+        mock_parser.parse.return_value = [mock_event]
+
+        response = client.post(
+            "/callback",
+            content='{"events": []}',
+            headers={
+                "X-Line-Signature": "valid",
+                "Content-Type": "application/json",
+            },
+        )
+
+        assert response.status_code == 200
+        mock_handler.assert_called_once()
+
+    @patch("app.main.handle_audio_message")
+    @patch("app.main.parser")
+    def test_file_non_audio_ignored(self, mock_parser, mock_handler, client):
+        """Non-audio file (e.g. PDF) is ignored."""
+        mock_event = MagicMock()
+        mock_event.type = "message"
+        mock_event.message.type = "file"
+        mock_event.message.file_name = "document.pdf"
 
         mock_parser.parse.return_value = [mock_event]
 

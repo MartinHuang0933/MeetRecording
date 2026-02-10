@@ -78,14 +78,28 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
             continue
 
         message_type = getattr(event.message, "type", None)
-        logger.info("[WEBHOOK] Event[%d] message.type=%s, message.class=%s", i, message_type, type(event.message).__name__)
+        file_name = getattr(event.message, "file_name", None)
+        logger.info("[WEBHOOK] Event[%d] message.type=%s, message.class=%s, file_name=%s",
+                    i, message_type, type(event.message).__name__, file_name)
 
-        if message_type != "audio":
-            logger.info("[WEBHOOK] Event[%d] skipped (message type is '%s', not 'audio')", i, message_type)
+        # Accept: audio messages OR file messages with audio extensions
+        AUDIO_EXTENSIONS = (".m4a", ".mp3", ".wav", ".ogg", ".flac", ".aac", ".mp4")
+        is_audio = message_type == "audio"
+        is_audio_file = (
+            message_type == "file"
+            and file_name
+            and file_name.lower().endswith(AUDIO_EXTENSIONS)
+        )
+
+        if not is_audio and not is_audio_file:
+            if message_type == "file" and file_name:
+                logger.info("[WEBHOOK] Event[%d] skipped (file '%s' is not an audio format)", i, file_name)
+            else:
+                logger.info("[WEBHOOK] Event[%d] skipped (message type is '%s', not audio)", i, message_type)
             continue
 
-        logger.info("[WEBHOOK] Event[%d] Audio message detected! message_id=%s, user_id=%s",
-                    i, event.message.id, event.source.user_id)
+        logger.info("[WEBHOOK] Event[%d] Audio detected! type=%s, file_name=%s, message_id=%s, user_id=%s",
+                    i, message_type, file_name, event.message.id, event.source.user_id)
 
         def reply_func(text: str, _event=event):
             try:
