@@ -3,6 +3,7 @@
 import logging
 
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from fastapi.responses import HTMLResponse
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, AudioMessageContent  # noqa: F401
@@ -16,13 +17,22 @@ from linebot.v3.messaging import (
 
 from app.config import get_settings
 from app.line_handler import handle_audio_message
+from app.log_store import InMemoryHandler, get_logs, clear_logs, log_buffer
+from app.log_page import LOG_HTML
 
 settings = get_settings()
 
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Setup logging: console + in-memory buffer
+log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+logging.basicConfig(level=log_level, format=log_format)
+
+memory_handler = InMemoryHandler()
+memory_handler.setLevel(log_level)
+memory_handler.setFormatter(logging.Formatter(log_format))
+logging.getLogger().addHandler(memory_handler)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="LINE Voice Memo → Meeting Notes")
@@ -93,3 +103,30 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
         handle_audio_message(event, reply_func, background_tasks)
 
     return "OK"
+
+
+# ── Log viewer endpoints ──
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_page():
+    return LOG_HTML
+
+
+@app.get("/logs/api")
+async def logs_api(level: str = "", keyword: str = "", limit: int = 500):
+    entries = get_logs(level_filter=level, keyword=keyword, limit=limit)
+    return {
+        "total": len(log_buffer),
+        "showing": len(entries),
+        "logs": [
+            {"timestamp": e.timestamp, "level": e.level, "name": e.name, "message": e.message}
+            for e in entries
+        ],
+    }
+
+
+@app.post("/logs/clear")
+async def logs_clear():
+    count = clear_logs()
+    return {"cleared": count}
