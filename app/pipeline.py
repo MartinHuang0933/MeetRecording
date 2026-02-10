@@ -1,4 +1,4 @@
-"""Processing pipeline: download → validate → split → Claude → send result."""
+"""Processing pipeline: download → validate → split → transcribe → Claude → send result."""
 
 import logging
 import tempfile
@@ -8,6 +8,7 @@ from linebot.v3.messaging import MessagingApi, MessagingApiBlob, ApiClient, Conf
 
 from app.config import get_settings
 from app.audio_processor import download_audio, validate_audio, split_audio_if_needed
+from app.transcriber import transcribe_audio
 from app.summarizer import generate_meeting_notes, generate_meeting_notes_from_chunks
 from app.line_messenger import send_text_to_user
 
@@ -18,8 +19,8 @@ def process_audio_pipeline(user_id: str, message_id: str) -> None:
     """Full audio processing pipeline.
 
     Downloads audio from LINE, validates it, optionally splits large files,
-    sends to Claude for meeting notes generation, and pushes the result
-    back to the user via LINE.
+    transcribes via Whisper, sends transcript to Claude for meeting notes
+    generation, and pushes the result back to the user via LINE.
 
     Args:
         user_id: The LINE user ID to send results to.
@@ -45,7 +46,7 @@ def process_audio_pipeline(user_id: str, message_id: str) -> None:
         validate_audio(audio_data, settings.max_audio_size_mb)
         logger.info("[PIPELINE] Step 2: Validation passed")
 
-        # Step 3: Save to temp file, split if needed, generate notes
+        # Step 3: Save to temp file, split if needed
         with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = os.path.join(tmp_dir, "audio.m4a")
             with open(audio_path, "wb") as f:
@@ -56,29 +57,43 @@ def process_audio_pipeline(user_id: str, message_id: str) -> None:
             chunk_paths = split_audio_if_needed(audio_path)
             logger.info("[PIPELINE] Step 3: Got %d chunk(s)", len(chunk_paths))
 
+            # Step 4: Transcribe with Whisper
             if len(chunk_paths) == 1:
-                logger.info("[PIPELINE] Step 4: Sending audio to Claude API (model=%s, max_tokens=%d)...",
-                           settings.claude_model, settings.claude_max_tokens)
+                logger.info("[PIPELINE] Step 4: Transcribing audio with Whisper...")
+                transcript = transcribe_audio(audio_path, settings.openai_api_key)
+                logger.info("[PIPELINE] Step 4: Transcription complete (%d chars)", len(transcript))
+
+                # Step 5: Generate meeting notes with Claude
+                logger.info("[PIPELINE] Step 5: Sending transcript to Claude API (model=%s)...", settings.claude_model)
                 result = generate_meeting_notes(
-                    audio_data,
+                    transcript,
                     settings.claude_model,
                     settings.claude_max_tokens,
                     settings.anthropic_api_key,
                 )
             else:
-                logger.info("[PIPELINE] Step 4: Sending %d chunks to Claude API...", len(chunk_paths))
+                logger.info("[PIPELINE] Step 4: Transcribing %d chunks with Whisper...", len(chunk_paths))
+                transcripts = []
+                for i, chunk_path in enumerate(chunk_paths):
+                    logger.info("[PIPELINE] Step 4: Transcribing chunk %d/%d...", i + 1, len(chunk_paths))
+                    t = transcribe_audio(chunk_path, settings.openai_api_key)
+                    transcripts.append(t)
+                logger.info("[PIPELINE] Step 4: All chunks transcribed")
+
+                # Step 5: Generate meeting notes with Claude
+                logger.info("[PIPELINE] Step 5: Sending %d transcripts to Claude API...", len(transcripts))
                 result = generate_meeting_notes_from_chunks(
-                    chunk_paths,
+                    transcripts,
                     settings.claude_model,
                     settings.claude_max_tokens,
                     settings.anthropic_api_key,
                 )
 
-            logger.info("[PIPELINE] Step 4: Claude returned %d chars", len(result))
-            logger.debug("[PIPELINE] Step 4: Result preview: %s", result[:200])
+            logger.info("[PIPELINE] Step 5: Claude returned %d chars", len(result))
+            logger.debug("[PIPELINE] Step 5: Result preview: %s", result[:200])
 
-        # Step 5: Send result to user
-        logger.info("[PIPELINE] Step 5: Sending result to user via LINE push...")
+        # Step 6: Send result to user
+        logger.info("[PIPELINE] Step 6: Sending result to user via LINE push...")
         send_text_to_user(user_id, result, messaging_api)
         logger.info("[PIPELINE] ====== DONE message_id=%s ======", message_id)
 

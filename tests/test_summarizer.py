@@ -1,6 +1,3 @@
-import os
-import tempfile
-
 import pytest
 from unittest.mock import MagicMock, patch, Mock
 
@@ -21,7 +18,7 @@ def test_generate_meeting_notes_success(mock_anthropic_cls):
     mock_client.messages.create.return_value = mock_response
 
     result = generate_meeting_notes(
-        audio_data=b"fake_audio",
+        transcript="這是一段測試轉錄文字",
         model="claude-sonnet-4-20250514",
         max_tokens=4096,
         api_key="test-key",
@@ -43,7 +40,7 @@ def test_generate_meeting_notes_empty_response(mock_anthropic_cls):
     mock_client.messages.create.return_value = mock_response
 
     result = generate_meeting_notes(
-        audio_data=b"fake_audio",
+        transcript="這是一段測試轉錄文字",
         model="claude-sonnet-4-20250514",
         max_tokens=4096,
         api_key="test-key",
@@ -62,7 +59,7 @@ def test_generate_meeting_notes_prompt_structure(mock_anthropic_cls):
     mock_client.messages.create.return_value = mock_response
 
     generate_meeting_notes(
-        audio_data=b"fake_audio",
+        transcript="這是一段測試轉錄文字",
         model="claude-sonnet-4-20250514",
         max_tokens=4096,
         api_key="test-key",
@@ -73,35 +70,25 @@ def test_generate_meeting_notes_prompt_structure(mock_anthropic_cls):
 
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
-
-    content_blocks = messages[0]["content"]
-    assert len(content_blocks) == 2
-    assert content_blocks[0]["type"] == "input_audio"
-    assert content_blocks[0]["source"]["type"] == "base64"
-    assert content_blocks[0]["source"]["media_type"] == "audio/mp4"
-    assert content_blocks[1]["type"] == "text"
+    # Now sends plain text prompt (not input_audio blocks)
+    content = messages[0]["content"]
+    assert isinstance(content, str)
+    assert "這是一段測試轉錄文字" in content
 
 
 @patch("app.summarizer.generate_meeting_notes")
 def test_generate_meeting_notes_from_chunks_single(mock_generate):
     mock_generate.return_value = "## 會議摘要\n單一段落內容"
 
-    with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as f:
-        f.write(b"fake_audio_chunk")
-        chunk_path = f.name
+    result = generate_meeting_notes_from_chunks(
+        transcripts=["轉錄文字片段一"],
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        api_key="test-key",
+    )
 
-    try:
-        result = generate_meeting_notes_from_chunks(
-            chunk_paths=[chunk_path],
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            api_key="test-key",
-        )
-
-        assert result == "## 會議摘要\n單一段落內容"
-        mock_generate.assert_called_once()
-    finally:
-        os.unlink(chunk_path)
+    assert result == "## 會議摘要\n單一段落內容"
+    mock_generate.assert_called_once()
 
 
 @patch("app.summarizer._merge_meeting_notes")
@@ -113,30 +100,18 @@ def test_generate_meeting_notes_from_chunks_multiple(mock_generate, mock_merge):
     ]
     mock_merge.return_value = "## 會議摘要\n合併後的完整內容"
 
-    chunk_paths = []
-    try:
-        for i in range(2):
-            with tempfile.NamedTemporaryFile(
-                suffix=".m4a", delete=False
-            ) as f:
-                f.write(f"fake_audio_chunk_{i}".encode())
-                chunk_paths.append(f.name)
+    result = generate_meeting_notes_from_chunks(
+        transcripts=["轉錄文字片段一", "轉錄文字片段二"],
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        api_key="test-key",
+    )
 
-        result = generate_meeting_notes_from_chunks(
-            chunk_paths=chunk_paths,
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            api_key="test-key",
-        )
-
-        assert mock_generate.call_count == 2
-        mock_merge.assert_called_once_with(
-            ["## 會議摘要\n第一段內容", "## 會議摘要\n第二段內容"],
-            "claude-sonnet-4-20250514",
-            4096,
-            "test-key",
-        )
-        assert result == "## 會議摘要\n合併後的完整內容"
-    finally:
-        for path in chunk_paths:
-            os.unlink(path)
+    assert mock_generate.call_count == 2
+    mock_merge.assert_called_once_with(
+        ["## 會議摘要\n第一段內容", "## 會議摘要\n第二段內容"],
+        "claude-sonnet-4-20250514",
+        4096,
+        "test-key",
+    )
+    assert result == "## 會議摘要\n合併後的完整內容"

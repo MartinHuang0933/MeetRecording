@@ -4,6 +4,7 @@ import pytest
 os.environ.setdefault("LINE_CHANNEL_SECRET", "test_secret")
 os.environ.setdefault("LINE_CHANNEL_ACCESS_TOKEN", "test_token")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test_anthropic_key")
+os.environ.setdefault("OPENAI_API_KEY", "test_openai_key")
 
 
 @pytest.fixture
