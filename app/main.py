@@ -44,25 +44,51 @@ async def callback(request: Request, background_tasks: BackgroundTasks):
     signature = request.headers.get("X-Line-Signature", "")
     body = (await request.body()).decode("utf-8")
 
+    logger.info("[WEBHOOK] Received callback request")
+    logger.info("[WEBHOOK] Signature: %s", signature[:20] + "..." if signature else "(empty)")
+    logger.info("[WEBHOOK] Body length: %d chars", len(body))
+    logger.debug("[WEBHOOK] Body: %s", body[:500])
+
     try:
         events = parser.parse(body, signature)
+        logger.info("[WEBHOOK] Parsed %d event(s)", len(events))
     except InvalidSignatureError:
+        logger.error("[WEBHOOK] Invalid signature!")
         raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        logger.exception("[WEBHOOK] Failed to parse webhook body: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
 
-    for event in events:
-        if getattr(event, "type", None) != "message":
+    for i, event in enumerate(events):
+        event_type = getattr(event, "type", None)
+        logger.info("[WEBHOOK] Event[%d] type=%s, class=%s", i, event_type, type(event).__name__)
+
+        if event_type != "message":
+            logger.info("[WEBHOOK] Event[%d] skipped (not a message event)", i)
             continue
 
-        if getattr(event.message, "type", None) != "audio":
+        message_type = getattr(event.message, "type", None)
+        logger.info("[WEBHOOK] Event[%d] message.type=%s, message.class=%s", i, message_type, type(event.message).__name__)
+
+        if message_type != "audio":
+            logger.info("[WEBHOOK] Event[%d] skipped (message type is '%s', not 'audio')", i, message_type)
             continue
+
+        logger.info("[WEBHOOK] Event[%d] Audio message detected! message_id=%s, user_id=%s",
+                    i, event.message.id, event.source.user_id)
 
         def reply_func(text: str, _event=event):
-            messaging_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=_event.reply_token,
-                    messages=[TextMessage(text=text)],
+            try:
+                logger.info("[REPLY] Sending reply to token=%s...", _event.reply_token[:20])
+                messaging_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=_event.reply_token,
+                        messages=[TextMessage(text=text)],
+                    )
                 )
-            )
+                logger.info("[REPLY] Reply sent successfully")
+            except Exception as e:
+                logger.exception("[REPLY] Failed to send reply: %s", e)
 
         handle_audio_message(event, reply_func, background_tasks)
 

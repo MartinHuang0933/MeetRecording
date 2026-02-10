@@ -1,9 +1,12 @@
 """Audio downloading, validation, and splitting for LINE voice memo processing."""
 
+import logging
 import tempfile
 import os
 
 from pydub import AudioSegment
+
+logger = logging.getLogger(__name__)
 
 
 def download_audio(message_id: str, blob_api) -> bytes:
@@ -16,8 +19,23 @@ def download_audio(message_id: str, blob_api) -> bytes:
     Returns:
         The raw audio bytes.
     """
+    logger.info("[DOWNLOAD] Fetching message content for message_id=%s", message_id)
     response = blob_api.get_message_content(message_id)
-    return response.content
+    logger.info("[DOWNLOAD] Response type=%s, has content attr=%s", type(response).__name__, hasattr(response, 'content'))
+    # LINE SDK v3 get_message_content returns bytes directly or response object
+    if isinstance(response, bytes):
+        logger.info("[DOWNLOAD] Response is raw bytes, length=%d", len(response))
+        return response
+    elif hasattr(response, 'content'):
+        logger.info("[DOWNLOAD] Response.content length=%d", len(response.content))
+        return response.content
+    elif hasattr(response, 'read'):
+        data = response.read()
+        logger.info("[DOWNLOAD] Response.read() length=%d", len(data))
+        return data
+    else:
+        logger.error("[DOWNLOAD] Unknown response type: %s, dir=%s", type(response), dir(response))
+        raise TypeError(f"Unexpected response type from LINE API: {type(response)}")
 
 
 def validate_audio(audio_data: bytes, max_size_mb: int) -> None:

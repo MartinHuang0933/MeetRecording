@@ -83,12 +83,15 @@ def send_text_to_user(user_id: str, text: str, messaging_api) -> None:
         batch = segments[batch_start:batch_start + LINE_MAX_MESSAGES_PER_PUSH]
         messages = [TextMessage(text=segment) for segment in batch]
 
-        messaging_api.push_message(
-            PushMessageRequest(to=user_id, messages=messages)
-        )
-        logger.info(
-            "Pushed %d message(s) to user %s (batch starting at %d)",
-            len(batch),
-            user_id,
-            batch_start,
-        )
+        try:
+            messaging_api.push_message(
+                PushMessageRequest(to=user_id, messages=messages)
+            )
+            logger.info(
+                "[PUSH] Pushed %d message(s) to user %s (batch starting at %d)",
+                len(batch),
+                user_id,
+                batch_start,
+            )
+        except Exception as e:
+            logger.exception("[PUSH] Failed to push messages to user %s: %s", user_id, e)

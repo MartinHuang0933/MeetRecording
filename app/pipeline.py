@@ -33,24 +33,32 @@ def process_audio_pipeline(user_id: str, message_id: str) -> None:
     blob_api = MessagingApiBlob(api_client)
 
     try:
-        logger.info("Starting pipeline for message %s from user %s", message_id, user_id)
+        logger.info("[PIPELINE] ====== START message_id=%s user_id=%s ======", message_id, user_id)
 
         # Step 1: Download audio
+        logger.info("[PIPELINE] Step 1: Downloading audio...")
         audio_data = download_audio(message_id, blob_api)
-        logger.info("Downloaded audio: %d bytes", len(audio_data))
+        logger.info("[PIPELINE] Step 1: Downloaded %d bytes", len(audio_data))
 
         # Step 2: Validate
+        logger.info("[PIPELINE] Step 2: Validating audio (max=%dMB)...", settings.max_audio_size_mb)
         validate_audio(audio_data, settings.max_audio_size_mb)
+        logger.info("[PIPELINE] Step 2: Validation passed")
 
         # Step 3: Save to temp file, split if needed, generate notes
         with tempfile.TemporaryDirectory() as tmp_dir:
             audio_path = os.path.join(tmp_dir, "audio.m4a")
             with open(audio_path, "wb") as f:
                 f.write(audio_data)
+            logger.info("[PIPELINE] Step 3: Saved to temp file %s", audio_path)
 
+            logger.info("[PIPELINE] Step 3: Checking if audio needs splitting...")
             chunk_paths = split_audio_if_needed(audio_path)
+            logger.info("[PIPELINE] Step 3: Got %d chunk(s)", len(chunk_paths))
 
             if len(chunk_paths) == 1:
+                logger.info("[PIPELINE] Step 4: Sending audio to Claude API (model=%s, max_tokens=%d)...",
+                           settings.claude_model, settings.claude_max_tokens)
                 result = generate_meeting_notes(
                     audio_data,
                     settings.claude_model,
@@ -58,6 +66,7 @@ def process_audio_pipeline(user_id: str, message_id: str) -> None:
                     settings.anthropic_api_key,
                 )
             else:
+                logger.info("[PIPELINE] Step 4: Sending %d chunks to Claude API...", len(chunk_paths))
                 result = generate_meeting_notes_from_chunks(
                     chunk_paths,
                     settings.claude_model,
@@ -65,16 +74,23 @@ def process_audio_pipeline(user_id: str, message_id: str) -> None:
                     settings.anthropic_api_key,
                 )
 
-        # Step 4: Send result to user
+            logger.info("[PIPELINE] Step 4: Claude returned %d chars", len(result))
+            logger.debug("[PIPELINE] Step 4: Result preview: %s", result[:200])
+
+        # Step 5: Send result to user
+        logger.info("[PIPELINE] Step 5: Sending result to user via LINE push...")
         send_text_to_user(user_id, result, messaging_api)
-        logger.info("Pipeline completed for message %s", message_id)
+        logger.info("[PIPELINE] ====== DONE message_id=%s ======", message_id)
 
     except ValueError as e:
         error_msg = f"音訊處理失敗：{e}"
-        logger.warning("Validation error for message %s: %s", message_id, e)
+        logger.warning("[PIPELINE] Validation error for message %s: %s", message_id, e)
         send_text_to_user(user_id, error_msg, messaging_api)
 
     except Exception as e:
         error_msg = "處理音訊時發生錯誤，請稍後再試。"
-        logger.exception("Unexpected error for message %s: %s", message_id, e)
-        send_text_to_user(user_id, error_msg, messaging_api)
+        logger.exception("[PIPELINE] Unexpected error for message %s: %s", message_id, e)
+        try:
+            send_text_to_user(user_id, error_msg, messaging_api)
+        except Exception as send_err:
+            logger.exception("[PIPELINE] Failed to send error message: %s", send_err)

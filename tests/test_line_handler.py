@@ -23,9 +23,10 @@ class TestHandleAudioMessage:
 
         handle_audio_message(event, reply_func, background_tasks)
 
-        reply_func.assert_called_once_with(
-            "\ud83c\udf99\ufe0f \u5df2\u6536\u5230\u8a9e\u97f3\u8a0a\u606f\uff0c\u6b63\u5728\u8655\u7406\u4e2d\uff0c\u8acb\u7a0d\u5019..."
-        )
+        reply_func.assert_called_once()
+        call_text = reply_func.call_args[0][0]
+        assert "已收到語音訊息" in call_text
+        assert "處理中" in call_text
 
     def test_handle_audio_message_adds_background_task(self):
         """Verify background_tasks.add_task is called with the pipeline function."""

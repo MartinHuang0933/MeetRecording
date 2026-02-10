@@ -12,7 +12,8 @@ def generate_meeting_notes(
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    logger.info("Sending audio to Claude API for meeting notes generation")
+    logger.info("[CLAUDE] Sending audio (%d bytes, base64 %d chars) to model=%s, max_tokens=%d",
+               len(audio_data), len(base64_audio), model, max_tokens)
 
     response = client.messages.create(
         model=model,
@@ -55,10 +56,10 @@ def generate_meeting_notes(
     )
 
     if not result:
-        logger.warning("Empty response from Claude API")
+        logger.warning("[CLAUDE] Empty response from Claude API, content blocks: %s", response.content)
         return "無法生成會議記錄。"
 
-    logger.info("Meeting notes generated successfully")
+    logger.info("[CLAUDE] Meeting notes generated: %d chars", len(result))
     return result
 
 
